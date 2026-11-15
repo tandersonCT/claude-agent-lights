@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "tanderson.agent-lights",
+  "name": "Agent lights",
+  "version": "1.0.0",
+  "author": "tanderson",
+  "description": "One light per running Claude Code session: red waiting on you, green done, yellow working; click jumps to its tmux pane",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Agent lights",
+    "description": "Claude Code session status lights; click jumps to the tmux pane",
+    "category": "AI",
+    "allowMultiple": false
+  }
+}
