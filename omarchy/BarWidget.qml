@@ -268,10 +268,18 @@ BarWidget {
     }
   }
 
+  // Load the popup only once the shell has injected `bar` (it arrives after the
+  // widget is created): the drawer reads the bar's position and shell mode when
+  // it is built, and without them it floats as a top-bar card.
+  function loadPicker() {
+    if (root.bar && !pickerLoader.item && pickerLoader.status !== Loader.Loading)
+      pickerLoader.setSource(Qt.resolvedUrl("PebblePopup.qml"), { anchorItem: root, bar: root.bar, owner: root })
+  }
+  onBarChanged: loadPicker()
+  Component.onCompleted: loadPicker()
+
   Loader {
     id: pickerLoader
-    Component.onCompleted: setSource(Qt.resolvedUrl("PebblePopup.qml"),
-                                     { anchorItem: root, bar: root.bar, owner: root })
     onStatusChanged: {
       if (status === Loader.Error) sourceComponent = cardPopup
     }
@@ -280,6 +288,7 @@ BarWidget {
       item.contentItem = [pickerColumn]
     }
   }
+  Binding { target: pickerLoader.item; property: "bar"; value: root.bar; when: !!pickerLoader.item && !!root.bar }
   Binding { target: pickerLoader.item; property: "anchorItem"; value: root.pickerAnchor || root; when: !!pickerLoader.item }
   Binding { target: pickerLoader.item; property: "open"; value: root.pickerOpen; when: !!pickerLoader.item }
   Binding {
