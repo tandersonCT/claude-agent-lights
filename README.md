@@ -25,7 +25,7 @@ which session needs you, and click the light to go straight back to it.
 
 - **Repo stripe:** a thin stripe beside each light in its repo's colour, so you
   can tell which project a session belongs to. A worktree counts as its main
-  repo. Right-click a light to pick the colour.
+  repo. Right-click a light to pick the colour (a 4×4 swatch grid plus Auto).
 
 It needs no Claude Code hooks or configuration. Everything comes from files
 Claude Code already writes.
@@ -71,11 +71,12 @@ Each light also has `"repo": "my-app", "repoColor": "#89b4fa"`.
 
 ## Repo colours
 
-Each repo gets a colour from a 9-colour palette that leaves out red, yellow and
-green, because those mean session state. The palette is `blue`, `sapphire`,
-`sky`, `teal`, `lavender`, `mauve`, `pink`, `peach` and `flamingo` (Catppuccin
-Mocha). A repo you haven't set gets an automatic colour from its name, which is
-the same on every machine. To set one:
+Each repo gets a colour from a 16-colour palette that leaves out red, yellow
+and green, because those mean session state: `blue`, `sapphire`, `sky`, `cyan`,
+`teal`, `lavender`, `indigo`, `violet`, `mauve`, `fuchsia`, `pink`, `flamingo`,
+`peach`, `orange`, `brown` and `white`. Any `#rrggbb` works too. A repo you
+haven't set gets an automatic colour from its name, which is the same on every
+machine. To set one:
 
 ```sh
 core/agent_lights.py color my-app teal       # or any #rrggbb

@@ -156,6 +156,7 @@ BarWidget {
   property string pickerRepo: ""
   property string pickerColor: ""
   property Item pickerAnchor: null
+  readonly property int swatchColumns: 4
   readonly property bool stripeOnRight: !!(bar && bar.position === "right")
 
   function openPicker(anchor, light) {
@@ -165,7 +166,7 @@ BarWidget {
     pickerColor = light.repoColor || ""
     pickerOpen = true
   }
-  function close() { pickerOpen = false }  // PopupCard calls this on an outside click
+  function close() { pickerOpen = false }  // the popup calls this on an outside click
   function chooseColor(value) {
     colorProc.command = [root.helper, "color", root.pickerRepo, value]
     colorProc.running = true
@@ -189,79 +190,105 @@ BarWidget {
     onExited: { root.lastScan = ""; root.rescan() }
   }
 
-  PopupCard {
-    id: picker
-    anchorItem: root.pickerAnchor || root
-    bar: root.bar
-    owner: root
-    open: root.pickerOpen
-    contentWidth: picker.fittedContentWidth(Style.space(176))
-    contentHeight: picker.fittedContentHeight(pickerColumn.implicitHeight)
+  // The picker's content. It is handed to whichever popup loads below.
+  Column {
+    id: pickerColumn
+    visible: false
+    width: swatchGrid.implicitWidth
+    spacing: Style.space(8)
 
-    Column {
-      id: pickerColumn
-      anchors.fill: parent
-      spacing: Style.space(8)
+    Text {
+      text: root.pickerRepo
+      color: root.bar ? root.bar.barForeground : Commons.Color.foreground
+      font.family: root.bar ? root.bar.fontFamily : Style.font.family
+      font.pixelSize: Style.font.body
+      font.bold: true
+      elide: Text.ElideRight
+      width: pickerColumn.width
+    }
 
-      Text {
-        text: root.pickerRepo
-        color: root.bar ? root.bar.barForeground : Commons.Color.foreground
-        font.family: root.bar ? root.bar.fontFamily : Style.font.family
-        font.pixelSize: Style.font.body
-        font.bold: true
-        elide: Text.ElideRight
-        width: parent.width
-      }
-
-      Grid {
-        columns: 3
-        spacing: Style.space(6)
-        Repeater {
-          model: root.swatches
-          Rectangle {
-            required property var modelData
-            readonly property bool current: modelData.hex === root.pickerColor
-            width: Style.space(50)
-            height: Style.space(26)
-            radius: Style.space(6)
-            color: modelData.hex
-            border.width: current ? 2 : 0
-            border.color: root.bar ? root.bar.barForeground : Commons.Color.foreground
-            Text {
-              anchors.centerIn: parent
-              text: parent.modelData.name
-              color: "#1e1e2e"
-              font.pixelSize: Style.font.body * 0.62
-            }
-            MouseArea {
-              anchors.fill: parent
-              cursorShape: Qt.PointingHandCursor
-              onClicked: root.chooseColor(parent.modelData.name)
-            }
+    Grid {
+      id: swatchGrid
+      columns: root.swatchColumns
+      spacing: Style.space(6)
+      Repeater {
+        model: root.swatches
+        Rectangle {
+          required property var modelData
+          readonly property bool current: modelData.hex === root.pickerColor
+          width: Style.space(52)
+          height: Style.space(26)
+          radius: Style.space(6)
+          color: modelData.hex
+          border.width: current ? 2 : 0
+          border.color: root.bar ? root.bar.barForeground : Commons.Color.foreground
+          Text {
+            anchors.centerIn: parent
+            text: parent.modelData.name
+            color: "#1e1e2e"
+            font.pixelSize: Style.font.body * 0.62
+          }
+          MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.chooseColor(parent.modelData.name)
           }
         }
       }
+    }
 
-      Rectangle {
-        width: parent.width
-        height: Style.space(24)
-        radius: Style.space(6)
-        color: "transparent"
-        border.width: 1
-        border.color: Qt.rgba(root.subagentColor.r, root.subagentColor.g, root.subagentColor.b, 0.4)
-        Text {
-          anchors.centerIn: parent
-          text: "Auto (from the repo name)"
-          color: root.bar ? root.bar.barForeground : Commons.Color.foreground
-          font.pixelSize: Style.font.body * 0.7
-        }
-        MouseArea {
-          anchors.fill: parent
-          cursorShape: Qt.PointingHandCursor
-          onClicked: root.chooseColor("auto")
-        }
+    Rectangle {
+      width: pickerColumn.width
+      height: Style.space(24)
+      radius: Style.space(6)
+      color: Qt.rgba(root.subagentColor.r, root.subagentColor.g, root.subagentColor.b, 0.08)
+      Text {
+        anchors.centerIn: parent
+        text: "Auto (from the repo name)"
+        color: root.bar ? root.bar.barForeground : Commons.Color.foreground
+        font.pixelSize: Style.font.body * 0.7
+      }
+      MouseArea {
+        anchors.fill: parent
+        cursorShape: Qt.PointingHandCursor
+        onClicked: root.chooseColor("auto")
       }
     }
+  }
+
+  // The popup: the Pebble Shell drawer (denon.bar's PopupPanel, the same
+  // frosted, rail-attached surface as Studio and the accent picker) when that
+  // plugin is installed, else Omarchy's own PopupCard.
+  Component {
+    id: cardPopup
+    PopupCard {
+      anchorItem: root.pickerAnchor || root
+      bar: root.bar
+      owner: root
+    }
+  }
+
+  Loader {
+    id: pickerLoader
+    Component.onCompleted: setSource(Qt.resolvedUrl("../denon.bar/panels/PopupPanel.qml"),
+                                     { anchorItem: root, bar: root.bar, owner: root })
+    onStatusChanged: {
+      if (status === Loader.Error) sourceComponent = cardPopup
+    }
+    onLoaded: {
+      pickerColumn.visible = true
+      item.contentItem = [pickerColumn]
+    }
+  }
+  Binding { target: pickerLoader.item; property: "anchorItem"; value: root.pickerAnchor || root; when: !!pickerLoader.item }
+  Binding { target: pickerLoader.item; property: "open"; value: root.pickerOpen; when: !!pickerLoader.item }
+  Binding {
+    target: pickerLoader.item; property: "contentWidth"; when: !!pickerLoader.item
+    value: pickerLoader.item ? pickerLoader.item.fittedContentWidth(pickerColumn.width + 2 * pickerLoader.item.padding + 4) : 0
+  }
+  Binding {
+    target: pickerLoader.item; property: "contentHeight"; when: !!pickerLoader.item
+    value: pickerLoader.item ? pickerLoader.item.fittedContentHeight(pickerColumn.implicitHeight + 2 * pickerLoader.item.padding + 4) : 0
   }
 
   Timer {

@@ -281,10 +281,11 @@ class RepoColors(unittest.TestCase):
         for repo in ("music-sorter", "config-workspace", "a", "omarchy-style"):
             self.assertIn(al.auto_color(repo), hexes)
             self.assertEqual(al.auto_color(repo), al.auto_color(repo))
-        self.assertEqual(al.auto_color("music-sorter"), "#b4befe")  # crc32-based: same on every machine
+        self.assertEqual(al.auto_color("music-sorter"), "#89dceb")  # crc32-based: same on every machine
 
     def test_palette_avoids_state_colours(self):
-        self.assertEqual(len(al.PALETTE), 9)
+        self.assertEqual(len(al.PALETTE), 16)
+        self.assertEqual(len(set(al.PALETTE.values())), 16)
         self.assertFalse({"#f38ba8", "#f9e2af", "#a6e3a1"} & set(al.PALETTE.values()))
 
     def test_overrides_by_name_or_hex_win_and_bad_values_are_ignored(self):

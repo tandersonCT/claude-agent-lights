@@ -379,10 +379,11 @@ def running_subagents(rec, cache, now_s):
 # red, yellow and green, which mean session state.
 
 COLORS_FILE = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.join(HOME, ".config")), "agent-lights/colors.json")
-PALETTE = {  # Catppuccin Mocha, without red/yellow/green
-    "blue": "#89b4fa", "sapphire": "#74c7ec", "sky": "#89dceb",
-    "teal": "#94e2d5", "lavender": "#b4befe", "mauve": "#cba6f7",
-    "pink": "#f5c2e7", "peach": "#fab387", "flamingo": "#f2cdcd",
+PALETTE = {  # 16 colours (4 x 4 in the picker), none near red/yellow/green
+    "blue": "#89b4fa", "sapphire": "#74c7ec", "sky": "#89dceb", "cyan": "#22d3ee",
+    "teal": "#94e2d5", "lavender": "#b4befe", "indigo": "#7c83f7", "violet": "#a78bfa",
+    "mauve": "#cba6f7", "fuchsia": "#e879f9", "pink": "#f5c2e7", "flamingo": "#f2cdcd",
+    "peach": "#fab387", "orange": "#fb923c", "brown": "#b08968", "white": "#f5f5f5",
 }
 HEX = re.compile(r'^#[0-9a-fA-F]{6}$')
 
