@@ -8,7 +8,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 dest="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/tanderson.agent-lights"
 
 mkdir -p "$dest"
-install -m 644 "$here/BarWidget.qml" "$here/manifest.json" "$dest/"
+install -m 644 "$here"/*.qml "$here/manifest.json" "$dest/"
 install -m 755 "$here/../core/agent_lights.py" "$dest/agent-lights"
 echo "Installed to $dest"
 

@@ -256,9 +256,9 @@ BarWidget {
     }
   }
 
-  // The popup: the Pebble Shell drawer (denon.bar's PopupPanel, the same
-  // frosted, rail-attached surface as Studio and the accent picker) when that
-  // plugin is installed, else Omarchy's own PopupCard.
+  // The popup: the Pebble Shell drawer (PebblePopup.qml wraps denon.bar's
+  // PopupPanel: the same frosted, rail-attached surface as Studio and the accent
+  // picker) when that plugin is installed, else Omarchy's own PopupCard.
   Component {
     id: cardPopup
     PopupCard {
@@ -270,7 +270,7 @@ BarWidget {
 
   Loader {
     id: pickerLoader
-    Component.onCompleted: setSource(Qt.resolvedUrl("../denon.bar/panels/PopupPanel.qml"),
+    Component.onCompleted: setSource(Qt.resolvedUrl("PebblePopup.qml"),
                                      { anchorItem: root, bar: root.bar, owner: root })
     onStatusChanged: {
       if (status === Loader.Error) sourceComponent = cardPopup
