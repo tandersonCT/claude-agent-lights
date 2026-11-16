@@ -343,15 +343,18 @@ BarWidget {
           y: root.vertical ? 2 : parent.height - 4
         }
 
-        // The light (and its ring) sit above the subagent row, both centred.
+        // The light (and its ring) sit above the subagent row, both centred,
+        // on whole pixels: a half-pixel offset renders the Canvas ring and the
+        // dot slightly apart at fractional display scales.
         Column {
-          anchors.centerIn: parent
+          x: Math.round((parent.width - width) / 2)
+          y: Math.round((parent.height - height) / 2)
           spacing: 1
           scale: lightButton.pressScale
 
           Item {
-            anchors.horizontalCenter: parent.horizontalCenter
-            width: lightButton.ringed ? root.ringPx + 8 : root.dotPx
+            x: Math.round((parent.width - width) / 2)
+            width: lightButton.ringed ? root.ringPx + 8 : root.dotPx + 2
             height: width
 
             Canvas {
@@ -366,22 +369,31 @@ BarWidget {
               }
             }
 
-            Rectangle {
+            // Drawn on a Canvas the same size as the ring's, so both are
+            // rasterised the same way and stay concentric.
+            Canvas {
               id: dot
-              anchors.centerIn: parent
-              width: root.dotPx
-              height: root.dotPx
-              radius: width / 2
-              color: root.colors[lightButton.modelData.light] || "#f9e2af"
+              anchors.fill: parent
+              readonly property color fill: root.colors[lightButton.modelData.light] || "#f9e2af"
               opacity: lightButton.modelData.light === "waiting" ? root.blink
                 : lightButton.modelData.light === "done" ? root.breathe : root.work
+              onFillChanged: requestPaint()
+              onPaint: {
+                var ctx = getContext("2d")
+                ctx.reset()
+                ctx.fillStyle = fill
+                ctx.beginPath()
+                ctx.arc(width / 2, height / 2, root.dotPx / 2, 0, 2 * Math.PI)
+                ctx.fill()
+              }
+              Component.onCompleted: requestPaint()
             }
           }
 
           // One tiny dot per running subagent, below the ring (max 4, then "+").
           Row {
             visible: lightButton.subs.length > 0
-            anchors.horizontalCenter: parent.horizontalCenter
+            x: Math.round((parent.width - width) / 2)
             spacing: 2
             Repeater {
               model: Math.min(lightButton.subs.length, root.maxSubDots)
