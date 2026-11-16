@@ -17,8 +17,12 @@ that works and finishes again lights up again.
 Sessions running a plan (lean-plan/lean-execute or superpowers) also get plan
 progress (done/total per task), and running subagents are listed per session.
 
-  agent_lights.py scan          print the lights as one JSON array
-  agent_lights.py jump <pid>    switch tmux to that session's pane and focus its terminal
+Each light also names its repo and a colour for it (colors.json, or automatic).
+
+  agent_lights.py scan                      print the lights as one JSON array
+  agent_lights.py jump <pid>                switch tmux to that session's pane and focus its terminal
+  agent_lights.py color <repo> <colour>     set a repo's colour: palette name, #rrggbb or auto
+  agent_lights.py palette                   print the named colours as JSON
 
 Python 3 stdlib only. Reads undocumented Claude Code internals (tested with
 Claude Code 2.1.325), so an update can change the formats.
@@ -31,6 +35,7 @@ import re
 import subprocess
 import sys
 import time
+import zlib
 
 HOME = os.path.expanduser("~")
 SESSIONS_DIR = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR", os.path.join(HOME, ".claude")), "sessions")
@@ -367,13 +372,82 @@ def running_subagents(rec, cache, now_s):
     return out
 
 
-def enrich(lights, sessions, cache, projects_dir, now_s):
-    """Attach plan progress and running subagents to each light (cache updated in place)."""
+# --- Repo colours --------------------------------------------------------------
+# Each light names its repo and a colour for it, so a bar can draw a stripe.
+# Colours come from colors.json ({"repo": "teal" | "#rrggbb"}); a repo without
+# an entry gets a stable automatic colour from its name. The palette leaves out
+# red, yellow and green, which mean session state.
+
+COLORS_FILE = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.join(HOME, ".config")), "agent-lights/colors.json")
+PALETTE = {  # Catppuccin Mocha, without red/yellow/green
+    "blue": "#89b4fa", "sapphire": "#74c7ec", "sky": "#89dceb",
+    "teal": "#94e2d5", "lavender": "#b4befe", "mauve": "#cba6f7",
+    "pink": "#f5c2e7", "peach": "#fab387", "flamingo": "#f2cdcd",
+}
+HEX = re.compile(r'^#[0-9a-fA-F]{6}$')
+
+
+def color_value(value):
+    """A palette name or #rrggbb -> #rrggbb (lower case), else None."""
+    if not isinstance(value, str):
+        return None
+    v = value.strip().lower()
+    return PALETTE.get(v) or (v if HEX.match(v) else None)
+
+
+def auto_color(repo):
+    """Stable across runs and machines (crc32, not Python's per-run hash())."""
+    names = list(PALETTE)
+    return PALETTE[names[zlib.crc32(repo.encode()) % len(names)]]
+
+
+def color_for(repo, colors):
+    return color_value(colors.get(repo)) or auto_color(repo)
+
+
+def repo_of(cwd):
+    """The repo a session works in: the folder holding git's common dir, so a
+    worktree counts as its main repo; outside git, the cwd's own folder name."""
+    common = run(["git", "-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"]).strip()
+    if common:
+        top = os.path.dirname(common.rstrip("/")) if os.path.basename(common.rstrip("/")) == ".git" else common.rstrip("/")
+        if top.endswith(".git"):  # bare repo: name.git
+            top = top[:-4]
+        return os.path.basename(top) or "/"
+    return os.path.basename(cwd.rstrip("/")) or "/"
+
+
+def load_colors(path):
+    return load_json(path, {})
+
+
+def set_color(path, repo, value):
+    """Set a repo's colour (palette name or #rrggbb), or "auto" to drop it."""
+    colors = load_colors(path)
+    if value.strip().lower() == "auto":
+        colors.pop(repo, None)
+    elif color_value(value):
+        colors[repo] = value.strip().lower()
+    else:
+        raise ValueError(f"not a colour: {value!r} (use one of {', '.join(PALETTE)}, #rrggbb or auto)")
+    save_json(path, colors)
+    return colors
+
+
+def enrich(lights, sessions, cache, projects_dir, now_s, colors=None):
+    """Attach plan progress, running subagents and the repo colour to each light
+    (cache updated in place)."""
+    colors = colors or {}
     by_pid = {r.get("pid"): r for r in sessions}
     for light in lights:
         rec = by_pid.get(light["pid"], {})
         light["plan"] = plan_progress(rec, cache, projects_dir, now_s)
         light["subagents"] = running_subagents(rec, cache, now_s)
+        entry = cache.setdefault(rec.get("sessionId") or "", {}) if rec.get("sessionId") else {}
+        if entry.get("repoCwd") != rec.get("cwd"):
+            entry.update(repo=repo_of(rec.get("cwd") or HOME), repoCwd=rec.get("cwd"))
+        light["repo"] = entry["repo"]
+        light["repoColor"] = color_for(entry["repo"], colors)
     live = {r.get("sessionId") for r in sessions}
     for sid in [s for s in cache if s not in live]:
         del cache[sid]
@@ -411,7 +485,7 @@ def cmd_scan(args):
     cache_path = os.path.join(os.path.dirname(args.state), "cache.json")
     cache = load_json(cache_path, {})
     before = json.dumps(cache, sort_keys=True)
-    enrich(lights, sessions, cache, args.projects, now_ms / 1000)
+    enrich(lights, sessions, cache, args.projects, now_ms / 1000, load_colors(args.colors))
     if json.dumps(cache, sort_keys=True) != before:
         save_json(cache_path, cache)
     print(json.dumps(lights))
@@ -449,12 +523,27 @@ def main(argv=None):
     p.add_argument("--sessions", default=SESSIONS_DIR)
     p.add_argument("--state", default=STATE_FILE)
     p.add_argument("--projects", default=PROJECTS_DIR)
+    p.add_argument("--colors", default=COLORS_FILE)
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("scan")
     s.add_argument("--now", type=int, default=0)
     j = sub.add_parser("jump")
     j.add_argument("pid")
+    c = sub.add_parser("color", help="set a repo's colour: a palette name, #rrggbb, or auto")
+    c.add_argument("repo")
+    c.add_argument("value")
+    sub.add_parser("palette", help="print the named colours as JSON")
     args = p.parse_args(argv)
+    if args.cmd == "color":
+        try:
+            set_color(args.colors, args.repo, args.value)
+        except ValueError as e:
+            print(e, file=sys.stderr)
+            return 2
+        return 0
+    if args.cmd == "palette":
+        print(json.dumps([{"name": n, "hex": h} for n, h in PALETTE.items()]))
+        return 0
     return cmd_scan(args) if args.cmd == "scan" else cmd_jump(args)
 
 

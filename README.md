@@ -23,6 +23,10 @@ which session needs you, and click the light to go straight back to it.
 - **Subagent dots:** one tiny dot per running subagent, in a row under the
   light (up to 4, then "+").
 
+- **Repo stripe:** a thin stripe beside each light in its repo's colour, so you
+  can tell which project a session belongs to. A worktree counts as its main
+  repo. Right-click a light to pick the colour.
+
 It needs no Claude Code hooks or configuration. Everything comes from files
 Claude Code already writes.
 
@@ -57,11 +61,33 @@ Code 2.1.325, so an update can change them. All the parsing is in one file, and
   "tmux": "17:@21.%38", "light": "busy", "since": 1794774902834,
   "plan": {"name": "refactor", "total": 12, "done": 1,
            "states": ["done", "current", "todo", "..."]},
-  "subagents": ["Implement Task 2: parser fixes"]}]
+  "subagents": ["Implement Task 2: parser fixes"],
+  "repo": "my-app", "repoColor": "#89b4fa"}]
 ```
 
 `light` is one of `waiting`, `done` or `busy`; lights are sorted in that order.
+Each light also has `"repo": "my-app", "repoColor": "#89b4fa"`.
 `plan` is `null` when the session isn't running a plan.
+
+## Repo colours
+
+Each repo gets a colour from a 9-colour palette that leaves out red, yellow and
+green, because those mean session state. The palette is `blue`, `sapphire`,
+`sky`, `teal`, `lavender`, `mauve`, `pink`, `peach` and `flamingo` (Catppuccin
+Mocha). A repo you haven't set gets an automatic colour from its name, which is
+the same on every machine. To set one:
+
+```sh
+core/agent_lights.py color my-app teal       # or any #rrggbb
+core/agent_lights.py color my-app auto       # back to automatic
+core/agent_lights.py palette                 # the named colours as JSON
+```
+
+Choices are stored in `~/.config/agent-lights/colors.json` (or under
+`$XDG_CONFIG_HOME`), as `{"my-app": "teal"}`. Any UI that reads `scan` gets the
+same colours, so copy that file to keep them consistent across machines. The
+repo name is the folder that holds the git repo, or for a session outside git,
+the session's folder name.
 
 ## Install (Omarchy)
 

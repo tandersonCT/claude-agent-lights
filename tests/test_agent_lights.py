@@ -252,5 +252,82 @@ class PlanProgress(unittest.TestCase):
         self.assertNotIn("gone", self.cache)
 
 
+class RepoColors(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.colors = os.path.join(self.tmp.name, "agent-lights", "colors.json")
+        self.orig_run = al.run
+
+    def tearDown(self):
+        al.run = self.orig_run
+        self.tmp.cleanup()
+
+    def git_says(self, common_dir):
+        al.run = lambda cmd: (common_dir + "\n") if cmd[:1] == ["git"] else ""
+
+    def test_worktree_and_subdir_resolve_to_main_repo(self):
+        self.git_says("/src/music-sorter/.git")
+        self.assertEqual(al.repo_of("/src/music-sorter-repairs"), "music-sorter")
+        self.assertEqual(al.repo_of("/src/music-sorter/packages/core"), "music-sorter")
+
+    def test_bare_repo_and_non_git_fallback(self):
+        self.git_says("/srv/tools.git")
+        self.assertEqual(al.repo_of("/srv/tools-wt"), "tools")
+        self.git_says("")
+        self.assertEqual(al.repo_of("/home/me/notes/"), "notes")
+
+    def test_auto_colour_is_stable_and_from_palette(self):
+        hexes = set(al.PALETTE.values())
+        for repo in ("music-sorter", "config-workspace", "a", "omarchy-style"):
+            self.assertIn(al.auto_color(repo), hexes)
+            self.assertEqual(al.auto_color(repo), al.auto_color(repo))
+        self.assertEqual(al.auto_color("music-sorter"), "#b4befe")  # crc32-based: same on every machine
+
+    def test_palette_avoids_state_colours(self):
+        self.assertEqual(len(al.PALETTE), 9)
+        self.assertFalse({"#f38ba8", "#f9e2af", "#a6e3a1"} & set(al.PALETTE.values()))
+
+    def test_overrides_by_name_or_hex_win_and_bad_values_are_ignored(self):
+        colors = {"a": "Teal", "b": "#ABCDEF", "c": "chartreuse", "d": 7}
+        self.assertEqual(al.color_for("a", colors), "#94e2d5")
+        self.assertEqual(al.color_for("b", colors), "#abcdef")
+        self.assertEqual(al.color_for("c", colors), al.auto_color("c"))
+        self.assertEqual(al.color_for("d", colors), al.auto_color("d"))
+
+    def test_cli_set_auto_and_refuse(self):
+        self.assertEqual(al.main(["--colors", self.colors, "color", "music-sorter", "teal"]), 0)
+        self.assertEqual(al.main(["--colors", self.colors, "color", "other", "#112233"]), 0)
+        self.assertEqual(al.load_colors(self.colors), {"music-sorter": "teal", "other": "#112233"})
+        self.assertEqual(al.main(["--colors", self.colors, "color", "music-sorter", "auto"]), 0)
+        self.assertEqual(al.load_colors(self.colors), {"other": "#112233"})
+        self.assertEqual(al.main(["--colors", self.colors, "color", "x", "red"]), 2)  # not in the palette
+        self.assertEqual(al.load_colors(self.colors), {"other": "#112233"})
+
+    def test_corrupt_colors_file_means_auto(self):
+        os.makedirs(os.path.dirname(self.colors))
+        with open(self.colors, "w") as f:
+            f.write("{oops")
+        self.assertEqual(al.load_colors(self.colors), {})
+
+    def test_palette_command(self):
+        import contextlib, io
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            al.main(["palette"])
+        names = [c["name"] for c in json.loads(out.getvalue())]
+        self.assertEqual(names, list(al.PALETTE))
+
+    def test_enrich_adds_repo_and_colour_and_caches_repo(self):
+        calls = []
+        al.run = lambda cmd: calls.append(cmd) or "/src/proj/.git\n"
+        rec = {"pid": 1, "sessionId": "s1", "cwd": "/src/proj"}
+        cache = {}
+        light = al.enrich([{"pid": 1}], [rec], cache, self.tmp.name, 0, {"proj": "mauve"})[0]
+        self.assertEqual((light["repo"], light["repoColor"]), ("proj", "#cba6f7"))
+        n = len(calls)
+        al.enrich([{"pid": 1}], [rec], cache, self.tmp.name, 0, {})
+        self.assertEqual(len(calls), n)  # repo came from the cache, no second git call
+
+
 if __name__ == "__main__":
     unittest.main()
