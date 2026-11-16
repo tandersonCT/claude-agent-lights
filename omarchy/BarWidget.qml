@@ -17,6 +17,8 @@ import qs.Ui
 // its docstring and tests/test_agent_lights.py); this only draws its output.
 // A session running a lean or superpowers plan gets a segmented accent ring
 // (one arc per task); running subagents show as a row of tiny dots under it.
+// Each light has a thin stripe in its repo's colour; right-click a light to
+// choose that repo's colour (stored by the engine in ~/.config/agent-lights).
 // Settings (shell.json entry): "intervalMs" (default 2000), "maxLights" (8).
 BarWidget {
   id: root
@@ -113,7 +115,8 @@ BarWidget {
 
   function tooltipFor(l) {
     var subs = l.subagents || []
-    return l.name + "  ·  " + shortCwd(l.cwd) + "\n" + labels[l.light] + " · " + ago(l.since)
+    return (l.repo ? "repo: " + l.repo + "\n" : "")
+      + l.name + "  ·  " + shortCwd(l.cwd) + "\n" + labels[l.light] + " · " + ago(l.since)
       + (l.plan ? " · plan " + l.plan.name + " " + l.plan.done + "/" + l.plan.total : "")
       + (l.tmux ? "\ntmux " + l.tmux.split(".")[0] : "")
       + subs.map(function(d) { return "\n↳ " + d }).join("")
@@ -147,6 +150,120 @@ BarWidget {
     onExited: root.rescan()
   }
 
+  // --- Repo colour picker (right-click a light) -----------------------------
+  property var swatches: []          // [{name, hex}] from `agent-lights palette`
+  property bool pickerOpen: false
+  property string pickerRepo: ""
+  property string pickerColor: ""
+  property Item pickerAnchor: null
+  readonly property bool stripeOnRight: !!(bar && bar.position === "right")
+
+  function openPicker(anchor, light) {
+    if (!light.repo) return
+    pickerAnchor = anchor
+    pickerRepo = light.repo
+    pickerColor = light.repoColor || ""
+    pickerOpen = true
+  }
+  function close() { pickerOpen = false }  // PopupCard calls this on an outside click
+  function chooseColor(value) {
+    colorProc.command = [root.helper, "color", root.pickerRepo, value]
+    colorProc.running = true
+    pickerOpen = false
+  }
+
+  Process {
+    id: paletteProc
+    command: [root.helper, "palette"]
+    running: true
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try { root.swatches = JSON.parse(text.trim() || "[]") } catch (e) { root.swatches = [] }
+      }
+    }
+  }
+
+  Process {
+    id: colorProc
+    onExited: { root.lastScan = ""; root.rescan() }
+  }
+
+  PopupCard {
+    id: picker
+    anchorItem: root.pickerAnchor || root
+    bar: root.bar
+    owner: root
+    open: root.pickerOpen
+    contentWidth: picker.fittedContentWidth(Style.space(176))
+    contentHeight: picker.fittedContentHeight(pickerColumn.implicitHeight)
+
+    Column {
+      id: pickerColumn
+      anchors.fill: parent
+      spacing: Style.space(8)
+
+      Text {
+        text: root.pickerRepo
+        color: root.bar ? root.bar.barForeground : Commons.Color.foreground
+        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        font.pixelSize: Style.font.body
+        font.bold: true
+        elide: Text.ElideRight
+        width: parent.width
+      }
+
+      Grid {
+        columns: 3
+        spacing: Style.space(6)
+        Repeater {
+          model: root.swatches
+          Rectangle {
+            required property var modelData
+            readonly property bool current: modelData.hex === root.pickerColor
+            width: Style.space(50)
+            height: Style.space(26)
+            radius: Style.space(6)
+            color: modelData.hex
+            border.width: current ? 2 : 0
+            border.color: root.bar ? root.bar.barForeground : Commons.Color.foreground
+            Text {
+              anchors.centerIn: parent
+              text: parent.modelData.name
+              color: "#1e1e2e"
+              font.pixelSize: Style.font.body * 0.62
+            }
+            MouseArea {
+              anchors.fill: parent
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.chooseColor(parent.modelData.name)
+            }
+          }
+        }
+      }
+
+      Rectangle {
+        width: parent.width
+        height: Style.space(24)
+        radius: Style.space(6)
+        color: "transparent"
+        border.width: 1
+        border.color: Qt.rgba(root.subagentColor.r, root.subagentColor.g, root.subagentColor.b, 0.4)
+        Text {
+          anchors.centerIn: parent
+          text: "Auto (from the repo name)"
+          color: root.bar ? root.bar.barForeground : Commons.Color.foreground
+          font.pixelSize: Style.font.body * 0.7
+        }
+        MouseArea {
+          anchors.fill: parent
+          cursorShape: Qt.PointingHandCursor
+          onClicked: root.chooseColor("auto")
+        }
+      }
+    }
+  }
+
   Timer {
     interval: root.intervalMs
     running: true
@@ -176,6 +293,19 @@ BarWidget {
         readonly property real rowH: subs.length > 0 ? root.subRowH : 0
         fixedWidth: root.vertical ? root.barSize : (ringed ? root.ringSlot : root.slot)
         fixedHeight: root.vertical ? (ringed ? root.ringSlot : root.slot) + rowH : root.barSize
+
+        // Repo stripe: 2 px in the repo's colour along the screen-edge side
+        // (left on a left rail, right on a right rail, bottom on a horizontal bar).
+        Rectangle {
+          visible: !!lightButton.modelData.repoColor
+          color: lightButton.modelData.repoColor || "transparent"
+          opacity: 0.9
+          radius: 1
+          width: root.vertical ? 2 : parent.width - 4
+          height: root.vertical ? parent.height - 4 : 2
+          x: root.vertical ? (root.stripeOnRight ? parent.width - 4 : 2) : 2
+          y: root.vertical ? 2 : parent.height - 4
+        }
 
         // The light (and its ring) sit above the subagent row, both centred.
         Column {
@@ -239,8 +369,12 @@ BarWidget {
         }
         tooltipText: root.tooltipFor(modelData)
         onPressed: function(b) {
-          if (b !== Qt.LeftButton) return
           lightButton.hideOwnTooltip()
+          if (b === Qt.RightButton) {
+            root.openPicker(lightButton, modelData)
+            return
+          }
+          if (b !== Qt.LeftButton) return
           jumpProc.command = [root.helper, "jump", String(modelData.pid)]
           jumpProc.running = true
         }
