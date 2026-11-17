@@ -12,7 +12,10 @@ import qs.Ui
 //   yellow, slow blink  working (slower than red, so red still reads as urgent)
 // Finished sessions disappear once you visit their tmux pane or click the
 // light. Hover a light for the session name, folder and how long it has been
-// in that state; click it to jump to its tmux pane and terminal window.
+// in that state; click it to jump to its tmux pane and terminal window (a
+// background `claude --bg` session opens a terminal on `claude attach`).
+// Middle-click a light to dismiss it until its status next changes;
+// `agent-lights reset` clears every dismissal.
 // All of the logic lives in the `agent-lights` helper next to this file (see
 // its docstring and tests/test_agent_lights.py); this only draws its output.
 // A session running a lean or superpowers plan gets a segmented accent ring
@@ -118,7 +121,7 @@ BarWidget {
     return (l.repo ? "repo: " + l.repo + "\n" : "")
       + l.name + "  ·  " + shortCwd(l.cwd) + "\n" + labels[l.light] + " · " + ago(l.since)
       + (l.plan ? " · plan " + l.plan.name + " " + l.plan.done + "/" + l.plan.total : "")
-      + (l.tmux ? "\ntmux " + l.tmux.split(".")[0] : "")
+      + (l.tmux ? "\ntmux " + l.tmux.split(".")[0] : l.bg ? "\nbackground · click to attach" : "")
       + subs.map(function(d) { return "\n↳ " + d }).join("")
   }
 
@@ -433,6 +436,11 @@ BarWidget {
           lightButton.hideOwnTooltip()
           if (b === Qt.RightButton) {
             root.openPicker(lightButton, modelData)
+            return
+          }
+          if (b === Qt.MiddleButton) {
+            jumpProc.command = [root.helper, "dismiss", String(modelData.pid)]
+            jumpProc.running = true
             return
           }
           if (b !== Qt.LeftButton) return

@@ -145,6 +145,44 @@ class AgentLights(unittest.TestCase):
         self.assertIn(["tmux", "switch-client", "-c", "/dev/pts/0", "-t", "%3"], calls)
 
 
+class BackgroundAndDismiss(unittest.TestCase):
+    def _write(self, d, rec):
+        rec = {"procStart": "1", "statusUpdatedAt": NOW, **rec}
+        with open(os.path.join(d, f"{rec['pid']}.json"), "w") as f:
+            json.dump(rec, f)
+
+    def test_jump_bg_session_spawns_claude_attach_and_marks_seen(self):
+        spawned = []
+        orig = (al.run, al.is_alive, al.spawn)
+        al.run, al.is_alive = (lambda cmd: ""), alive
+        al.spawn = lambda cmd: spawned.append(cmd) or True
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                self._write(d, {"pid": 100, "status": "idle", "kind": "bg", "jobId": "abc123", "cwd": "/x", "name": "N"})
+                state = os.path.join(d, "seen.json")
+                al.main(["--sessions", d, "--state", state, "jump", "100"])
+                self.assertEqual(al.load_seen(state), {f"100:{NOW}"})
+        finally:
+            al.run, al.is_alive, al.spawn = orig
+        self.assertEqual(spawned, [["xdg-terminal-exec", "--dir=/x", "--title=N", "claude", "attach", "abc123"]])
+
+    def test_dismiss_hides_any_light_until_status_changes(self):
+        recs = [{"pid": 100, "procStart": "1", "status": "shell", "statusUpdatedAt": NOW}]
+        lights, keep = al.scan(recs, {f"100:{NOW}"}, set(), NOW)
+        self.assertEqual(lights, [])
+        recs[0]["statusUpdatedAt"] = NOW + 1
+        lights, _ = al.scan(recs, keep, set(), NOW + 1)
+        self.assertEqual([l["light"] for l in lights], ["busy"])
+
+    def test_reset_removes_state_and_cache(self):
+        with tempfile.TemporaryDirectory() as d:
+            state, cache = os.path.join(d, "seen.json"), os.path.join(d, "cache.json")
+            for p in (state, cache):
+                open(p, "w").write("[]")
+            al.main(["--state", state, "reset"])
+            self.assertFalse(os.path.exists(state) or os.path.exists(cache))
+
+
 def tool_use(command):
     """One assistant transcript line running a Bash command."""
     return json.dumps({"type": "assistant", "message": {"content": [

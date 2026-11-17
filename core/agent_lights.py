@@ -23,6 +23,9 @@ Each light also names its repo and a colour for it (colors.json, or automatic).
 
   agent_lights.py scan                      print the lights as one JSON array
   agent_lights.py jump <pid>                switch tmux to that session's pane and focus its terminal
+                                            (background sessions: open a terminal on `claude attach`)
+  agent_lights.py dismiss <pid>             hide a light until its status next changes
+  agent_lights.py reset                     forget visits, dismissals and the cache
   agent_lights.py color <repo> <colour>     set a repo's colour: palette name, #rrggbb or auto
   agent_lights.py palette                   print the named colours as JSON
 
@@ -138,6 +141,23 @@ def notify(title, body):
     run(["notify-send", title, body])
 
 
+def spawn(cmd):
+    """Start a long-lived program (a terminal) detached from us. Replaced in tests."""
+    try:
+        subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+        return True
+    except OSError:
+        return False
+
+
+def bg_id(rec):
+    """The id `claude attach` takes for a background (`claude --bg`) session."""
+    if rec.get("kind") != "bg":
+        return None
+    return rec.get("jobId") or rec.get("sessionId")
+
+
 # --- Sessions ------------------------------------------------------------------
 
 def load_sessions(sessions_dir, alive=None):
@@ -219,8 +239,11 @@ def scan(sessions, seen, active_panes, now_ms, shells=frozenset()):
                 keep.add(seen_key(rec))
             if seen_key(rec) in keep or now_ms - since > IDLE_MAX_MS:
                 continue
+        elif seen_key(rec) in keep:
+            continue  # dismissed; comes back when its status next changes
         lights.append({"pid": rec.get("pid"), "name": rec.get("name") or "", "cwd": rec.get("cwd") or "",
-                       "tmux": rec.get("tmux") or "", "light": light, "since": since})
+                       "tmux": rec.get("tmux") or "", "bg": bool(bg_id(rec)),
+                       "light": light, "since": since})
     lights.sort(key=lambda l: (ORDER[l["light"]], -l["since"]))
     return lights, keep
 
@@ -541,7 +564,12 @@ def cmd_jump(args):
     session, pane = pane_of(rec)
     client = pick_client(tmux_clients(), session) if pane else None
     if client is None:
-        target = f"tmux attach -t {session}" if session else rec.get("cwd", "")
+        job = bg_id(rec)
+        if job and spawn(["xdg-terminal-exec", f"--dir={rec.get('cwd') or HOME}",
+                          f"--title={rec.get('name') or 'claude'}", "claude", "attach", job]):
+            mark_seen(args.state, rec)
+            return 0
+        target = f"tmux attach -t {session}" if session else f"claude attach {job}" if job else rec.get("cwd", "")
         notify("Agent lights", f"{rec.get('name', 'Session')}: {target}")
         return 0
     run(["tmux", "switch-client", "-c", client["name"], "-t", pane])
@@ -549,9 +577,32 @@ def cmd_jump(args):
     run(["tmux", "select-pane", "-t", pane])
     focus_terminal(client["pid"])
     if rec.get("status") == "idle":
-        seen = load_seen(args.state)
-        seen.add(seen_key(rec))
-        save_seen(args.state, seen)
+        mark_seen(args.state, rec)
+    return 0
+
+
+def mark_seen(state, rec):
+    seen = load_seen(state)
+    seen.add(seen_key(rec))
+    save_seen(state, seen)
+
+
+def cmd_dismiss(args):
+    """Hide one light until its session's status next changes."""
+    rec = next((r for r in load_sessions(args.sessions) if str(r.get("pid")) == str(args.pid)), None)
+    if rec is None:
+        return 1
+    mark_seen(args.state, rec)
+    return 0
+
+
+def cmd_reset(args):
+    """Forget every visit/dismissal and the plan/subagent cache."""
+    for path in (args.state, os.path.join(os.path.dirname(args.state), "cache.json")):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
     return 0
 
 
@@ -566,6 +617,9 @@ def main(argv=None):
     s.add_argument("--now", type=int, default=0)
     j = sub.add_parser("jump")
     j.add_argument("pid")
+    d = sub.add_parser("dismiss", help="hide a light until its status changes")
+    d.add_argument("pid")
+    sub.add_parser("reset", help="clear visits, dismissals and cache")
     c = sub.add_parser("color", help="set a repo's colour: a palette name, #rrggbb, or auto")
     c.add_argument("repo")
     c.add_argument("value")
@@ -581,6 +635,10 @@ def main(argv=None):
     if args.cmd == "palette":
         print(json.dumps([{"name": n, "hex": h} for n, h in PALETTE.items()]))
         return 0
+    if args.cmd == "dismiss":
+        return cmd_dismiss(args)
+    if args.cmd == "reset":
+        return cmd_reset(args)
     return cmd_scan(args) if args.cmd == "scan" else cmd_jump(args)
 
 

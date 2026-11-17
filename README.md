@@ -17,6 +17,10 @@ which session needs you, and click the light to go straight back to it.
   plan and its progress, and each running subagent's description.
 - **Click:** switches tmux to that session's pane and focuses the terminal
   window. That also counts as a visit, so a green light goes away.
+  A background session (`claude --bg`, no tmux pane) opens a new terminal
+  running `claude attach <id>` instead.
+- **Middle-click:** dismisses a light until its session's status next changes.
+  `agent_lights.py reset` forgets every visit and dismissal.
 - **Plan ring:** a session running a multi-task plan gets a segmented ring
   around its light. Each arc is one task: lit = done, half = the current task,
   faint = still to do. Above 12 tasks it becomes one continuous arc.
