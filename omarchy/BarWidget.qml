@@ -335,22 +335,26 @@ BarWidget {
         fixedHeight: root.vertical ? (ringed ? root.ringSlot : root.slot) + rowH : root.barSize
 
         // Repo stripe: 2 px in the repo's colour along the screen-edge side
-        // (left on a left rail, right on a right rail, bottom on a horizontal bar).
+        // (left on a left rail, right on a right rail, bottom on a horizontal bar),
+        // as long as the dot is wide and centred on it, whatever the slot size.
         Rectangle {
           visible: !!lightButton.modelData.repoColor
           color: lightButton.modelData.repoColor || "transparent"
           opacity: 0.9
           radius: 1
-          width: root.vertical ? 2 : parent.width - 4
-          height: root.vertical ? parent.height - 4 : 2
-          x: root.stripeEdge === "right" ? parent.width - 4 : 2
-          y: root.stripeEdge === "bottom" ? parent.height - 4 : 2
+          readonly property real dotCx: lightGrid.x + lightItem.x + lightItem.width / 2
+          readonly property real dotCy: lightGrid.y + lightItem.y + lightItem.height / 2
+          width: root.vertical ? 2 : root.dotPx
+          height: root.vertical ? root.dotPx : 2
+          x: root.vertical ? (root.stripeEdge === "right" ? parent.width - 4 : 2) : dotCx - width / 2
+          y: root.vertical ? dotCy - height / 2 : (root.stripeEdge === "bottom" ? parent.height - 4 : 2)
         }
 
         // The light (and its ring) sit above the subagent row, both centred,
         // on whole pixels: a half-pixel offset renders the Canvas ring and the
         // dot slightly apart at fractional display scales.
         Grid {
+          id: lightGrid
           x: Math.round((parent.width - width) / 2)
           y: Math.round((parent.height - height) / 2)
           columns: root.vertical ? 1 : 2
@@ -360,6 +364,7 @@ BarWidget {
           scale: lightButton.pressScale
 
           Item {
+            id: lightItem
             width: lightButton.ringed ? root.ringPx + 8 : root.dotPx + 2
             height: width
 
