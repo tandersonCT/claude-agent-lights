@@ -9,7 +9,7 @@ which session needs you, and click the light to go straight back to it.
 | Light | Meaning |
 |---|---|
 | 🔴 red, blinking (1 s) | waiting on you: a permission prompt or a question |
-| 🟡 yellow, slow blink (1.8 s) | working |
+| 🟡 yellow, slow blink (1.8 s) | working, or idle with a shell still running (a background Bash command) |
 | 🟢 green, breathing | finished, and you haven't been back to it yet |
 | (gone) | finished and visited, or idle for over 12 h |
 
@@ -38,9 +38,10 @@ light runs `agent_lights.py jump <pid>`.
 
 | Data | Where Claude Code keeps it |
 |---|---|
-| Live sessions: `status` (busy / waiting / idle), name, cwd, tmux pane | `~/.claude/sessions/<pid>.json` |
+| Live sessions: `status` (busy / shell / waiting / idle), name, cwd, tmux pane | `~/.claude/sessions/<pid>.json` |
 | Which plan a session runs | its transcript `~/.claude/projects/*/<sessionId>.jsonl`: the last plan folder (`YYYY-MM-DD-name`) named in its own `plan-log` tool calls |
 | Plan progress | `docs/plans/<slug>/plan.md` (`### N.` or `### Task N:` headings) + `log.md` (`progress · Task N done`) + a superpowers `.superpowers/sdd/*/progress.md` ledger (`Task N: complete`) |
+| Running shells | children of the session's pid whose command line sources `~/.claude/shell-snapshots/` (`/proc/<pid>/task/*/children`) |
 | Running subagents | `~/.claude/projects/*/<sessionId>/subagents/*.meta.json` (`finished: false`, active in the last 30 min) |
 
 Visits are stored in `~/.local/state/agent-lights/seen.json`. A byte-offset

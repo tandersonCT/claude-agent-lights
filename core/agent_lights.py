@@ -6,8 +6,10 @@ with a live "status" (busy | waiting | idle), a name, the cwd and the tmux pane.
 This turns those into lights for the bar:
 
   busy    -> "busy"     (working)
+  shell   -> "busy"     (running a shell command; any status not listed here too)
   waiting -> "waiting"  (needs you)
   idle    -> "done"     until you have visited it, then hidden
+  idle with a shell still running (a background Bash command) -> "busy"
 
 A finished session counts as visited once you click its light ("jump") or a scan
 finds its pane is the active pane of an attached tmux client. Visits are kept in
@@ -43,7 +45,12 @@ PROJECTS_DIR = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR", os.path.join(HOM
 STATE_FILE = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.join(HOME, ".local/state")), "agent-lights/seen.json")
 IDLE_MAX_MS = 12 * 3600 * 1000
 ORDER = {"waiting": 0, "done": 1, "busy": 2}
-LIGHTS = {"busy": "busy", "waiting": "waiting", "idle": "done"}
+LIGHTS = {"busy": "busy", "shell": "busy", "waiting": "waiting", "idle": "done"}
+
+
+def light_of(status):
+    """Unknown statuses (a newer Claude Code) count as working rather than vanish."""
+    return LIGHTS.get(status, "busy")
 CLIENT_FMT = "#{client_name}\t#{session_name}\t#{pane_id}\t#{client_activity}\t#{client_pid}"
 
 
@@ -61,6 +68,7 @@ def run(cmd):
 #   proc_start      /proc/<pid>/stat start time  -> e.g. `ps -o lstart= -p <pid>`
 #                   (check what Claude Code writes as "procStart" there first)
 #   is_alive        uses proc_start; kill(pid, 0) is a weaker fallback
+#   shell_pids      /proc/<pid>/task/*/children  -> `pgrep -P <pid> -f shell-snapshots`
 #   focus_terminal  Hyprland (hyprctl)            -> activate the terminal app
 #   notify          notify-send                    -> osascript "display notification"
 
@@ -71,6 +79,30 @@ def proc_start(pid):
             return f.read().rsplit(")", 1)[1].split()[19]
     except (OSError, ValueError, IndexError):
         return None
+
+
+def shell_pids(pids, proc="/proc"):
+    """The pids (of `pids`) that have a Bash-tool shell running: a direct child
+    whose command line sources ~/.claude/shell-snapshots/. MCP servers, hooks
+    and the status line are children too but never source a snapshot."""
+    out = set()
+    for pid in pids:
+        children = []
+        for path in glob.glob(os.path.join(proc, str(pid), "task", "*", "children")):
+            try:
+                with open(path) as f:
+                    children += f.read().split()
+            except OSError:
+                continue
+        for child in children:
+            try:
+                with open(os.path.join(proc, child, "cmdline"), "rb") as f:
+                    if b"/.claude/shell-snapshots/" in f.read():
+                        out.add(pid)
+                        break
+            except OSError:
+                continue
+    return out
 
 
 def is_alive(rec):
@@ -123,7 +155,7 @@ def load_sessions(sessions_dir, alive=None):
                 rec = json.load(f)
         except (OSError, ValueError):
             continue
-        if isinstance(rec, dict) and rec.get("status") in LIGHTS and alive(rec):
+        if isinstance(rec, dict) and isinstance(rec.get("status"), str) and rec["status"] and alive(rec):
             out.append(rec)
     return out
 
@@ -171,13 +203,16 @@ def save_seen(path, seen):
         pass
 
 
-def scan(sessions, seen, active_panes, now_ms):
-    """Pure: sessions + seen keys + active tmux panes -> (lights, new seen set)."""
+def scan(sessions, seen, active_panes, now_ms, shells=frozenset()):
+    """Pure: sessions + seen keys + active tmux panes + pids with a running
+    shell -> (lights, new seen set)."""
     lights, keep = [], set()
     live_pids = {str(r.get("pid")) for r in sessions}
     keep = {k for k in seen if k.split(":", 1)[0] in live_pids}
     for rec in sessions:
-        light = LIGHTS[rec["status"]]
+        light = light_of(rec["status"])
+        if light == "done" and rec.get("pid") in shells:
+            light = "busy"
         since = int(rec.get("statusUpdatedAt") or rec.get("updatedAt") or now_ms)
         if light == "done":
             if pane_of(rec)[1] in active_panes:
@@ -480,7 +515,8 @@ def cmd_scan(args):
     active = {c["pane"] for c in tmux_clients()}
     now_ms = args.now or int(time.time() * 1000)
     sessions = load_sessions(args.sessions)
-    lights, new_seen = scan(sessions, seen, active, now_ms)
+    shells = shell_pids([r.get("pid") for r in sessions if r.get("status") == "idle"])
+    lights, new_seen = scan(sessions, seen, active, now_ms, shells)
     if new_seen != seen:
         save_seen(args.state, new_seen)
     cache_path = os.path.join(os.path.dirname(args.state), "cache.json")

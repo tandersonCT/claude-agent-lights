@@ -68,6 +68,40 @@ class AgentLights(unittest.TestCase):
         lights, _ = al.scan(recs, seen, set(), NOW)
         self.assertIn(300, [l["pid"] for l in lights])
 
+    def test_idle_with_running_shell_is_busy(self):
+        # pid 300 is idle but has a background shell; pid 400 too, despite going idle 13 h ago
+        lights, seen = al.scan(sessions(), set(), {"%3"}, NOW, shells={300, 400})
+        by_pid = {l["pid"]: l["light"] for l in lights}
+        self.assertEqual(by_pid, {100: "busy", 200: "waiting", 300: "busy", 400: "busy"})
+        self.assertEqual(seen, set())  # a yellow light is never marked visited
+
+    def test_running_shell_does_not_hide_waiting(self):
+        lights, _ = al.scan(sessions(), set(), set(), NOW, shells={200})
+        self.assertEqual({l["pid"]: l["light"] for l in lights}[200], "waiting")
+
+    def test_shell_pids_finds_claude_shells_only(self):
+        with tempfile.TemporaryDirectory() as proc:
+            def mk(pid, cmd, children=()):
+                os.makedirs(os.path.join(proc, str(pid), "task", str(pid)))
+                with open(os.path.join(proc, str(pid), "cmdline"), "w") as f:
+                    f.write("\0".join(cmd))
+                with open(os.path.join(proc, str(pid), "task", str(pid), "children"), "w") as f:
+                    f.write(" ".join(map(str, children)) + " ")
+            mk(10, ["claude"], [11, 12])
+            mk(11, ["/usr/bin/zsh", "-c", "source /home/u/.claude/shell-snapshots/snapshot-zsh-1.sh && sleep 600"])
+            mk(12, ["npm", "exec", "some-mcp"])
+            mk(20, ["claude"], [21])
+            mk(21, ["sh", "-c", "statusline.sh"])
+            self.assertEqual(al.shell_pids([10, 20, 30], proc=proc), {10})
+
+    def test_shell_and_unknown_statuses_are_busy(self):
+        with tempfile.TemporaryDirectory() as d:
+            for pid, status in ((100, "shell"), (200, "some_new_state"), (300, None)):
+                with open(os.path.join(d, f"{pid}.json"), "w") as f:
+                    json.dump({"pid": pid, "procStart": "1", "status": status, "statusUpdatedAt": NOW}, f)
+            lights, _ = al.scan(al.load_sessions(d, alive=alive), set(), set(), NOW)
+        self.assertEqual({l["pid"]: l["light"] for l in lights}, {100: "busy", 200: "busy"})
+
     def test_seen_pruned_for_dead_pids(self):
         _, seen = al.scan(sessions(), {"999:1", "300:1794775000000"}, set(), NOW)
         self.assertEqual(seen, {"300:1794775000000"})
