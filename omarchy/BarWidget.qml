@@ -157,7 +157,9 @@ BarWidget {
   property string pickerColor: ""
   property Item pickerAnchor: null
   readonly property int swatchColumns: 4
-  readonly property bool stripeOnRight: !!(bar && bar.position === "right")
+  // The repo stripe sits on the screen-edge side of each light: left/right on
+  // a vertical rail, top on a top bar, bottom on a bottom bar.
+  readonly property string stripeEdge: bar && /^(left|right|top|bottom)$/.test(bar.position) ? bar.position : "bottom"
 
   function openPicker(anchor, light) {
     if (!light.repo) return
@@ -327,7 +329,9 @@ BarWidget {
         readonly property var subs: modelData.subagents || []
         readonly property bool ringed: plan !== null
         readonly property real rowH: subs.length > 0 ? root.subRowH : 0
-        fixedWidth: root.vertical ? root.barSize : (ringed ? root.ringSlot : root.slot)
+        // Horizontal: the subagent dots stand in a short column beside the
+        // ring, so the slot widens instead of outgrowing the bar's height.
+        fixedWidth: root.vertical ? root.barSize : (ringed ? root.ringSlot : root.slot) + rowH
         fixedHeight: root.vertical ? (ringed ? root.ringSlot : root.slot) + rowH : root.barSize
 
         // Repo stripe: 2 px in the repo's colour along the screen-edge side
@@ -339,21 +343,23 @@ BarWidget {
           radius: 1
           width: root.vertical ? 2 : parent.width - 4
           height: root.vertical ? parent.height - 4 : 2
-          x: root.vertical ? (root.stripeOnRight ? parent.width - 4 : 2) : 2
-          y: root.vertical ? 2 : parent.height - 4
+          x: root.stripeEdge === "right" ? parent.width - 4 : 2
+          y: root.stripeEdge === "bottom" ? parent.height - 4 : 2
         }
 
         // The light (and its ring) sit above the subagent row, both centred,
         // on whole pixels: a half-pixel offset renders the Canvas ring and the
         // dot slightly apart at fractional display scales.
-        Column {
+        Grid {
           x: Math.round((parent.width - width) / 2)
           y: Math.round((parent.height - height) / 2)
-          spacing: 1
+          columns: root.vertical ? 1 : 2
+          spacing: root.vertical ? 1 : 2
+          horizontalItemAlignment: Grid.AlignHCenter
+          verticalItemAlignment: Grid.AlignVCenter
           scale: lightButton.pressScale
 
           Item {
-            x: Math.round((parent.width - width) / 2)
             width: lightButton.ringed ? root.ringPx + 8 : root.dotPx + 2
             height: width
 
@@ -390,11 +396,13 @@ BarWidget {
             }
           }
 
-          // One tiny dot per running subagent, below the ring (max 4, then "+").
-          Row {
+          // One tiny dot per running subagent, below the ring on a vertical
+          // rail, beside it on a horizontal bar (max 4, then "+").
+          Grid {
             visible: lightButton.subs.length > 0
-            x: Math.round((parent.width - width) / 2)
+            columns: root.vertical ? root.maxSubDots + 1 : 1
             spacing: 2
+            horizontalItemAlignment: Grid.AlignHCenter
             Repeater {
               model: Math.min(lightButton.subs.length, root.maxSubDots)
               Rectangle {
