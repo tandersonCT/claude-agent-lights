@@ -43,8 +43,8 @@ light runs `agent_lights.py jump <pid>`.
 | Data | Where Claude Code keeps it |
 |---|---|
 | Live sessions: `status` (busy / shell / waiting / idle), name, cwd, tmux pane | `~/.claude/sessions/<pid>.json` |
-| Which plan a session runs | its transcript `~/.claude/projects/*/<sessionId>.jsonl`: the last plan folder (`YYYY-MM-DD-name`) named in its own `plan-log` tool calls |
-| Plan progress | `docs/plans/<slug>/plan.md` (`### N.` or `### Task N:` headings) + `log.md` (`progress · Task N done`) + a superpowers `.superpowers/sdd/*/progress.md` ledger (`Task N: complete`) |
+| Which plan a session runs | its transcript `~/.claude/projects/*/<sessionId>.jsonl`: the last plan (`YYYY-MM-DD-name`) named in its own tool calls, either in a `plan-log` call (lean) or as `docs/superpowers/plans/<slug>.md` / `.superpowers/sdd/<slug>/` (superpowers, once it has an SDD ledger) |
+| Plan progress | lean: `docs/plans/<slug>/plan.md` (`### N.` or `### Task N:` headings) + `log.md` (`progress · Task N done`), plus any SDD ledger naming that plan. superpowers: `docs/superpowers/plans/<slug>.md` (`### Task N:`) + its `.superpowers/sdd/*/progress.md` ledger (`Task N: complete`); the ring goes once every task is complete |
 | Running shells | children of the session's pid whose command line sources `~/.claude/shell-snapshots/` (`/proc/<pid>/task/*/children`) |
 | Running subagents | `~/.claude/projects/*/<sessionId>/subagents/*.meta.json` (`finished: false`, active in the last 30 min) |
 
@@ -52,7 +52,8 @@ Visits are stored in `~/.local/state/agent-lights/seen.json`. A byte-offset
 cache, `cache.json`, means a scan reads only the new part of each transcript.
 
 The plan ring follows the lean-skills `lean-plan` /
-`lean-execute` and superpowers plan conventions. A session that doesn't run a
+`lean-execute` and superpowers `executing-plans` / `subagent-driven-development`
+plan conventions. A session that doesn't run a
 plan just gets a plain light.
 
 **Caveat:** these are undocumented Claude Code internals, tested with Claude

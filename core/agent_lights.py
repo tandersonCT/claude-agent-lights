@@ -253,7 +253,12 @@ def scan(sessions, seen, active_panes, now_ms, shells=frozenset()):
 # last existing "<YYYY-MM-DD-name>/log.md" named on a plan-log line of its
 # transcript, total = "### N."
 # headings in the plan.md beside that log, done = distinct "progress · Task N
-# done" lines. Running subagents come from the session's subagents/*.meta.json.
+# done" lines. A superpowers run (executing-plans / subagent-driven-development)
+# has no log.md: its plan is the last "docs/superpowers/plans/<slug>.md" or
+# ".superpowers/sdd/<slug>/" named in its own tool calls that has an SDD ledger
+# (.superpowers/sdd/*/progress.md naming the plan on its first line); done =
+# "Task N: complete" ledger lines, and the ring goes once every task is done.
+# Running subagents come from the session's subagents/*.meta.json.
 
 PATH_TAIL = re.compile(r'[\w~./-]*$')  # the path token that ends right before a slug
 SLUG = re.compile(r'(?<![\w-])\d{4}-\d{2}-\d{2}-[A-Za-z0-9][A-Za-z0-9_-]*')  # plan folder, e.g. 2026-11-15-agent-rings
@@ -264,6 +269,9 @@ LOG_LINE = r'^- [\d-]+ [\d:]+ · progress · '
 TASK_DONE = re.compile(LOG_LINE + r'Task (\d+) done', re.M)
 PLAN_DONE = re.compile(LOG_LINE + r'Plan complete', re.M)
 LEDGER_DONE = re.compile(r'^Task (\d+): complete', re.M)  # superpowers SDD progress.md
+SDD_PREFIXES = (".superpowers/sdd/", "superpowers/plans/")  # path parts right before a superpowers slug
+LEDGER_PLAN = re.compile(r'plan:\s*(\S+\.md)')  # "# SDD ledger — plan: <path>"
+MENTION_RULES = 2  # bump when mentions() changes, so cached transcript offsets are reread
 PLAN_STALE_S = 24 * 3600
 SUBAGENT_STALE_S = 30 * 60
 
@@ -280,11 +288,12 @@ def find_transcript(sid, projects_dir, entry):
     return None
 
 
-def plan_log_calls(line):
-    """Inputs of the tool calls on one transcript line that run plan-log. Only
-    the session's own calls count: tool output and chat that merely mention
-    another plan (a cat of its log, a ledger saying "use plan-log") don't."""
-    if "plan-log" not in line or '"tool_use"' not in line:
+def plan_calls(line):
+    """Inputs of the tool calls on one transcript line that run plan-log or name
+    a superpowers plan. Only the session's own calls count: tool output and chat
+    that merely mention another plan (a cat of its log, a ledger saying "use
+    plan-log") don't."""
+    if '"tool_use"' not in line or not ("plan-log" in line or any(k in line for k in SDD_PREFIXES)):
         return []
     try:
         rec = json.loads(line)
@@ -295,21 +304,27 @@ def plan_log_calls(line):
     for item in content if isinstance(content, list) else []:
         if isinstance(item, dict) and item.get("type") == "tool_use":
             text = json.dumps(item.get("input"), ensure_ascii=False)
-            if "plan-log" in text:
+            if "plan-log" in text or any(k in text for k in SDD_PREFIXES):
                 calls.append(text)
     return calls
 
 
 def mentions(text):
-    """(written path, slug) for each plan folder named in a plan-log tool call,
-    oldest first. The slug is enough: commands often build the log path from a
-    variable (D=docs/plans/<slug>; plan-log $D/log.md ...)."""
+    """(written path, slug, kind) for each plan named in the session's tool
+    calls, oldest first: kind "lean" for a slug in a plan-log call, "sdd" for one
+    right after .superpowers/sdd/ or superpowers/plans/. The slug is enough:
+    commands often build the path from a variable (D=docs/plans/<slug>; plan-log
+    $D/log.md ...)."""
     out = []
     for line in text.splitlines():
-        for call in plan_log_calls(line):
+        for call in plan_calls(line):
             for m in SLUG.finditer(call):
                 prefix = PATH_TAIL.search(call, max(0, m.start() - 400), m.start()).group(0)
-                out.append((prefix + m.group(0) + "/log.md", m.group(0)))
+                if "plan-log" in call:
+                    out.append((prefix + m.group(0) + "/log.md", m.group(0), "lean"))
+                for k in SDD_PREFIXES:
+                    if prefix.endswith(k):
+                        out.append((prefix[:-len(k)], m.group(0), "sdd"))
     return out
 
 
@@ -327,8 +342,8 @@ def last_mention(path, entry, cwd):
     except OSError:
         return entry.get("mention")
     end = chunk.rfind(b"\n") + 1  # never split a line across reads
-    for written, slug in reversed(list(mentions(chunk[:end].decode("utf-8", "replace")))):
-        log_path = resolve_log(written, slug, cwd)
+    for written, slug, kind in reversed(list(mentions(chunk[:end].decode("utf-8", "replace")))):
+        log_path = resolve_log(written, slug, cwd) if kind == "lean" else resolve_sdd(written, slug, cwd)
         if log_path:
             entry["mention"] = log_path
             break
@@ -347,11 +362,15 @@ def worktrees(cwd):
     return _WORKTREES[cwd]
 
 
+def roots(cwd):
+    """Folders a plan's repo may be in: the cwd, its subfolders, its worktrees."""
+    return [cwd] + sorted(glob.glob(os.path.join(glob.escape(cwd), "*", ""))) + worktrees(cwd)
+
+
 def resolve_log(written, slug, cwd):
     rel = os.path.join("docs/plans", slug, "log.md")
-    candidates = [os.path.expanduser(written), os.path.join(cwd, written), os.path.join(cwd, rel)]
-    candidates += sorted(glob.glob(os.path.join(glob.escape(cwd), "*", rel)))
-    candidates += [os.path.join(w, rel) for w in worktrees(cwd)]
+    candidates = [os.path.expanduser(written), os.path.join(cwd, written)]
+    candidates += [os.path.join(r, rel) for r in roots(cwd)]
     obsidian = os.environ.get("OBSIDIAN_PLANS_DIR")
     if obsidian:
         candidates += sorted(glob.glob(os.path.join(glob.escape(obsidian), "*", slug, "log.md")))
@@ -359,6 +378,27 @@ def resolve_log(written, slug, cwd):
         if os.path.isabs(c) and os.path.isfile(c):
             return c
     return None
+
+
+def resolve_sdd(written, slug, cwd):
+    """The SDD ledger of superpowers plan <slug>: progress.md under some repo's
+    .superpowers/sdd/ whose first line names the plan. A plan with no ledger
+    yet (written or read, not run) doesn't count."""
+    written = os.path.expanduser(written)
+    for root in ([written] if os.path.isabs(written) else []) + roots(cwd):
+        for p in sorted(glob.glob(os.path.join(glob.escape(root), ".superpowers", "sdd", "*", "progress.md"))):
+            m = LEDGER_PLAN.search(first_line(p))
+            if m and os.path.basename(m.group(1)) == slug + ".md":
+                return p
+    return None
+
+
+def first_line(path):
+    try:
+        with open(path) as f:
+            return f.readline()
+    except OSError:
+        return ""
 
 
 def sdd_ledger(plan_path):
@@ -396,10 +436,36 @@ def progress_of(log_path, now_s):
     if not numbers or PLAN_DONE.search(log) or now_s - mtime > PLAN_STALE_S:
         return None
     done = {int(n) for n in TASK_DONE.findall(log)} | {int(n) for n in LEDGER_DONE.findall(ledger)}
+    return ring(os.path.basename(os.path.dirname(log_path)), numbers, done)
+
+
+def sdd_progress(ledger_path, now_s):
+    """Progress of a superpowers plan from its SDD ledger alone; None once every
+    task is complete (the ledger has no "Plan complete" line) or it went stale."""
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(ledger_path))))
+    m = LEDGER_PLAN.search(first_line(ledger_path))
+    if not m:
+        return None
+    plan_path = os.path.join(repo, os.path.expanduser(m.group(1)))  # absolute, or relative to the repo
+    try:
+        with open(ledger_path) as f:
+            ledger = f.read()
+        with open(plan_path) as f:
+            numbers = sorted({int(n) for n in TASK_HEADING.findall(f.read())})
+        mtime = os.path.getmtime(ledger_path)
+    except OSError:
+        return None
+    done = {int(n) for n in LEDGER_DONE.findall(ledger)}
+    if not numbers or set(numbers) <= done or now_s - mtime > PLAN_STALE_S:
+        return None
+    return ring(os.path.basename(plan_path)[:-3], numbers, done)
+
+
+def ring(slug, numbers, done):
+    """states[i] is "done", "current" (the lowest unfinished task) or "todo"."""
     current = next((n for n in numbers if n not in done), None)
     states = ["done" if n in done else "current" if n == current else "todo" for n in numbers]
-    return {"name": os.path.basename(os.path.dirname(log_path))[11:], "total": len(numbers),
-            "done": states.count("done"), "states": states}
+    return {"name": slug[11:], "total": len(numbers), "done": states.count("done"), "states": states}
 
 
 def plan_progress(rec, cache, projects_dir, now_s):
@@ -407,9 +473,13 @@ def plan_progress(rec, cache, projects_dir, now_s):
     if not sid:
         return None
     entry = cache.setdefault(sid, {})
+    if entry.get("v") != MENTION_RULES:  # rules changed: reread the transcript from the start
+        entry.update(v=MENTION_RULES, offset=0, mention=None)
     path = find_transcript(sid, projects_dir, entry)
     log_path = last_mention(path, entry, rec.get("cwd") or HOME) if path else None
-    return progress_of(log_path, now_s) if log_path and os.path.isfile(log_path) else None
+    if not log_path or not os.path.isfile(log_path):
+        return None
+    return sdd_progress(log_path, now_s) if log_path.endswith("progress.md") else progress_of(log_path, now_s)
 
 
 def running_subagents(rec, cache, now_s):

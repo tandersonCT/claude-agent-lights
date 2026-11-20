@@ -300,6 +300,66 @@ class PlanProgress(unittest.TestCase):
         self.assertEqual((p["name"], p["done"], p["total"]), ("repairs", 1, 3))
         self.assertEqual(p["states"], ["done", "current", "todo"])
 
+    def sp_plan(self, slug, tasks, ledger_lines=(), base=None, ledger_plan=None, age_s=60):
+        """A superpowers plan (docs/superpowers/plans/<slug>.md) and, unless
+        ledger_lines is None, its SDD ledger, as sdd-workspace lays them out."""
+        base = base or self.repo
+        plan = os.path.join(base, "docs/superpowers/plans", slug + ".md")
+        os.makedirs(os.path.dirname(plan), exist_ok=True)
+        with open(plan, "w") as f:
+            f.write("# Plan\n\n## Global Constraints\n\n" + "".join("### Task %d: t%d\n\nbody\n\n" % (n, n) for n in range(1, tasks + 1)))
+        if ledger_lines is None:
+            return None
+        ledger = os.path.join(base, ".superpowers/sdd", slug, "progress.md")
+        os.makedirs(os.path.dirname(ledger), exist_ok=True)
+        with open(ledger, "w") as f:
+            f.write("# SDD ledger — plan: %s\nSetup: x\n" % (ledger_plan or plan) + "".join(l + "\n" for l in ledger_lines))
+        os.utime(ledger, (self.now - age_s, self.now - age_s))
+        return ledger
+
+    def test_superpowers_plan_without_plan_log_reads_its_ledger(self):
+        # Shaped like a real executing-plans run: no plan-log, the plan named via $PWD,
+        # rulings appended to the ledger, an older finished plan also read.
+        self.sp_plan("2026-09-23-old", 2, ["Task 1: complete (x)", "Task 2: complete (y)"])
+        slug = "2026-11-08-character-variations-2-per-player-actions"
+        ledger = self.sp_plan(slug, 2, ["Task 1: Ruling: cascade instead of set null — cost if wrong: z"])
+        self.say(tool_use("cat docs/superpowers/plans/2026-09-23-old.md"),
+                 tool_use("cd repo; $S/subagent-driven-development/scripts/sdd-workspace $PWD/docs/superpowers/plans/%s.md" % slug),
+                 tool_result("docs/superpowers/plans/2026-09-23-old.md"),
+                 tool_use("cat >> %s <<'EOF'\nTask 1: Ruling: x\nEOF" % ledger))
+        p = self.progress()
+        self.assertEqual((p["name"], p["done"], p["total"]), ("character-variations-2-per-player-actions", 0, 2))
+        self.assertEqual(p["states"], ["current", "todo"])
+        with open(ledger, "a") as f:
+            f.write("Task 1: complete (commits a..b)\n")
+        os.utime(ledger, (self.now, self.now))
+        self.assertEqual(self.progress()["states"], ["done", "current"])
+
+    def test_cache_from_older_rules_rereads_the_transcript(self):
+        self.sp_plan("2026-01-09-zeta", 2, [])
+        self.say(tool_use("x docs/superpowers/plans/2026-01-09-zeta.md"))
+        self.cache["sid1"] = {"offset": os.path.getsize(self.transcript), "mention": None}  # scanned before SDD rules
+        self.assertEqual(self.progress()["name"], "zeta")
+
+    def test_superpowers_ring_goes_when_all_complete_stale_or_never_run(self):
+        self.sp_plan("2026-01-06-gamma", 2, ["Task 1: complete (x)", "Task 2: complete (y)"])
+        self.say(tool_use("x docs/superpowers/plans/2026-01-06-gamma.md"))
+        self.assertIsNone(self.progress())  # every task complete
+        self.sp_plan("2026-01-06-gamma", 2, ["Task 1: complete (x)"], age_s=25 * 3600)
+        self.assertIsNone(self.progress())  # stale ledger
+        self.sp_plan("2026-01-07-delta", 3, None)  # written but never run: no ledger
+        self.say(tool_use("cat docs/superpowers/plans/2026-01-07-delta.md"))
+        self.assertIsNone(self.progress())
+
+    def test_superpowers_ledger_in_worktree_with_relative_plan_path(self):
+        tree = os.path.join(self.root, "repo-feature")
+        al.run = lambda cmd: "worktree %s\n\nworktree %s\n" % (self.cwd, tree) if "worktree" in cmd else ""
+        self.sp_plan("2026-01-08-eps", 3, ["Task 2: complete (x)"], base=tree,
+                     ledger_plan="docs/superpowers/plans/2026-01-08-eps.md")
+        self.say(tool_use("task-start .superpowers/sdd/2026-01-08-eps/ 1"))
+        p = self.progress()
+        self.assertEqual((p["name"], p["done"], p["states"]), ("eps", 1, ["current", "done", "todo"]))
+
     def test_no_transcript_or_session_id_is_none(self):
         self.assertIsNone(self.progress())
         self.assertIsNone(al.plan_progress({"pid": 1}, {}, self.projects, self.now))
